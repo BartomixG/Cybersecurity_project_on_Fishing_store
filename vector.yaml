@@ -1,0 +1,23 @@
+sources:
+  nginx_docker_logs:
+    type: docker_logs
+    include_containers:
+      - sklep_web
+
+transforms:
+  format_nginx_logs:
+    type: remap
+    inputs:
+      - nginx_docker_logs
+    source: |
+      .formatted_message = parse_nginx_log!(.message, "combined")
+      del(.message)
+      del(.label)
+
+sinks:
+  console:
+    type: console
+    inputs:
+      - format_nginx_logs
+    encoding:
+      codec: json

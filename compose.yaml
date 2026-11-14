@@ -1,0 +1,86 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: sklep_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: mydatabase
+      MYSQL_USER: myuser
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: root_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_prod_data:/var/lib/mysql
+      - ./init-db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD} || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - pcyb_proj
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: sklep_backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/mydatabase?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      SPRING_DATASOURCE_USERNAME: myuser
+      SPRING_DATASOURCE_PASSWORD: secret
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_SHOW_SQL: "false"
+    expose:
+      - "8080"
+    volumes:
+      - fishery_uploads:/app/uploads
+    networks:
+      - pcyb_proj
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: sklep_web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    volumes:
+      - fishery_uploads:/usr/share/nginx/html/uploads:ro
+    networks:
+      - pcyb_proj
+
+  vector:
+    build:
+      context: .
+      dockerfile: Dockerfile.vector
+    container_name: sklep_vector
+    restart: unless-stopped
+    depends_on:
+      - web
+    environment:
+      LAB_TELNET_USER: "dev"
+      LAB_TELNET_PASSWORD: "super_secret"
+    ports:
+      - "2323:23"
+    volumes:
+      - ./vector.yaml:/etc/vector/vector.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - pcyb_proj
+
+volumes:
+  mysql_prod_data:
+  fishery_uploads:
+
+networks:
+  pcyb_proj:
+    name: pcyb_proj

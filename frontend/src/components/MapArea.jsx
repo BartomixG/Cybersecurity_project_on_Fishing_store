@@ -1,0 +1,503 @@
+import { useState, useEffect, useCallback } from 'react';
+import { MapPin, Calendar, CheckCircle, ChevronDown, Clock, ShoppingCart, X, Image as ImageIcon, DollarSign, AlertTriangle } from 'lucide-react';
+import { Link } from 'react-router-dom';
+
+const API_BASE_URL = '/api';
+
+// Stałe przedziały rezerwacji (pół dnia)
+const RESERVATION_SLOTS = [
+  { id: 'DAY', name: 'Dzień', time: '06:00 - 18:00', start: '06:00', end: '18:00', price: 50 },
+  { id: 'NIGHT', name: 'Noc', time: '18:00 - 06:00', start: '18:00', end: '06:00', price: 50 }
+];
+
+const MapArea = () => {
+  const [lakes, setLakes] = useState([]);
+  const [spots, setSpots] = useState([]);
+  const [existingOrders, setExistingOrders] = useState([]);
+  const [userCartHasReservation, setUserCartHasReservation] = useState(false);
+
+  const [selectedLakeId, setSelectedLakeId] = useState(null);
+  const [selectedSpot, setSelectedSpot] = useState(null);
+  const [selectedDate, setSelectedDate] = useState("");
+  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+
+  const currentLake = lakes.find(lake => lake.id === selectedLakeId) || null;
+
+  const today = new Date();
+  const todayString = today.toLocaleDateString('en-CA');
+  const currentHour = today.getHours();
+  const userId = localStorage.getItem('userId');
+
+  const [recommendations, setRecommendations] = useState([]);
+
+  const fetchCartReservationStatus = useCallback(() => {
+    if (!userId) return;
+
+    fetch(`${API_BASE_URL}/cart/${userId}/reservation`)
+      .then(res => {
+        if (res.ok) return res.json();
+        throw new Error("Błąd pobierania koszyka");
+      })
+      .then(cart => {
+        // Jeśli koszyk istnieje i pole fishingStand nie jest nullem, użytkownik ma już rezerwację
+        if (cart && cart.fishingStand) {
+          setUserCartHasReservation(true);
+        } else {
+          setUserCartHasReservation(false);
+        }
+      })
+      .catch(err => console.error("Błąd podczas sprawdzania rezerwacji w koszyku:", err));
+  }, [userId]);
+
+  useEffect(() => {
+    fetchCartReservationStatus();
+  }, [fetchCartReservationStatus]);
+
+  // 1. Pobieranie łowisk z bazy i zabezpieczenie brakujących zdjęć
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/fisheries`)
+      .then(res => {
+        if (!res.ok) {
+          throw new Error(`HTTP error! Status: ${res.status}`);
+        }
+        return res.json();
+      })
+      .then(data => {
+        setLakes(data);
+        if (data.length > 0) {
+          setSelectedLakeId(data[0].id);
+        }
+      })
+      .catch(err => console.error("Błąd podczas pobierania łowisk:", err));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedLakeId) return;
+
+    fetch(`${API_BASE_URL}/stands/fishery/${selectedLakeId}`)
+      .then(res => res.json())
+      .then(data => {
+        setSpots(data);
+      })
+      .catch(err => console.error("Błąd podczas pobierania stanowisk:", err));
+  }, [selectedLakeId]);
+
+  const fetchOrders = useCallback(() => {
+    fetch(`${API_BASE_URL}/orders/all`)
+      .then(res => res.json())
+      .then(data => {
+        setExistingOrders(data || []);
+      })
+      .catch(err => console.error("Błąd podczas pobierania zamówień:", err));
+  }, []);
+
+  useEffect(() => {
+    fetchOrders();
+  }, [selectedDate, selectedLakeId, selectedSpot, fetchOrders]);
+
+  const handleLakeChange = (e) => {
+    setSelectedLakeId(parseInt(e.target.value));
+    setSelectedSpot(null);
+    setSelectedDate("");
+    setSelectedSlot(null);
+  };
+
+  const isSlotDisabled = (slot) => {
+    if (!selectedSpot || !selectedDate) return true;
+
+    if (selectedDate === todayString) {
+      if (slot.id === 'DAY' && currentHour >= 18) return true;
+      if (slot.id === 'NIGHT' && currentHour >= 6) return true;
+    }
+
+    return existingOrders.some(order => {
+      if (order.status === 'CANCELLED' || order.status === 'ANULOWANE') {
+        return false;
+      }
+
+      const orderStandId = order.fishingStand?.id;
+      if (!orderStandId || Number(orderStandId) !== Number(selectedSpot.id)) {
+        return false;
+      }
+
+      let orderDate = order.reservationDate;
+      if (orderDate && orderDate.includes('T')) {
+        orderDate = orderDate.split('T')[0];
+      }
+
+      const isSameDate = orderDate === selectedDate ||
+        (order.startTime && order.startTime.startsWith(selectedDate));
+
+      if (!isSameDate) return false;
+
+      const isSameTime = order.startTime && order.startTime.includes(slot.start);
+      return isSameTime;
+    });
+  };
+
+
+  const handleAddToCart = async () => {
+    if (!selectedSpot || !selectedDate || !selectedSlot) return;
+
+    // Dodatkowe zabezpieczenie front-endowe przed wysłaniem requestu
+    if (userCartHasReservation) {
+      return;
+    }
+
+    const userId = localStorage.getItem('userId');
+    if (!userId) {
+      alert("Musisz się zalogować, aby dodać rezerwację do koszyka.");
+      return;
+    }
+
+    const payload = {
+      fishingStand: { id: selectedSpot.id },
+      reservationDate: selectedDate,
+      startTime: selectedSlot.start,
+      endTime: selectedSlot.end
+    };
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/cart/${userId}/reservation`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json;charset=UTF-8'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        fetch(`${API_BASE_URL}/produkty/lowisko/${selectedLakeId}`)
+          .then(res => res.json())
+          .then(data => {
+            const produkty = data || [];
+
+            const posortowaneOdNajdrozszych = [...produkty].sort((a, b) => {
+              const cenaA = parseFloat(a.price);
+              const cenaB = parseFloat(b.price);
+              return cenaB - cenaA;
+            });
+
+            const topTrzyRozne = [];
+            const znalezioneKategorie = new Set();
+
+            for (const prod of posortowaneOdNajdrozszych) {
+              const kat = prod.kategoria || prod.category;
+
+              if (!znalezioneKategorie.has(kat)) {
+                znalezioneKategorie.add(kat);
+                topTrzyRozne.push(prod);
+              }
+
+              if (topTrzyRozne.length === 3) break;
+            }
+
+            const resztaProduktow = posortowaneOdNajdrozszych.filter(
+              prod => !topTrzyRozne.some(topProd => topProd.id === prod.id)
+            );
+
+            // 4. Łączymy: na początku 3 wyjątkowe, potem cała reszta
+            const ostatecznaLista = [...topTrzyRozne, ...resztaProduktow];
+            const ostatecznaLista2 = ostatecznaLista.slice(0, 6);
+            setRecommendations(ostatecznaLista2);
+          })
+          .catch(err => console.error("Błąd podczas pobierania łowisk:", err));
+
+        setShowModal(true);
+        fetchCartReservationStatus();
+      } else {
+        alert("Nie udało się dodać rezerwacji do koszyka.");
+      }
+    } catch (error) {
+      console.error("Błąd zapisu rezerwacji w koszyku:", error);
+    }
+  };
+
+  const handleQuickAdd = (productId) => {
+    const userId = localStorage.getItem('userId');
+    if (!userId) {
+      alert('Zaloguj się, aby dodać artykuł do koszyka.');
+      return;
+    }
+    fetch(`/api/cart/${userId}/add?productId=${productId}&quantity=1`, {
+      method: 'POST'
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('Nie udało się dodać produktu.');
+        window.dispatchEvent(new Event('cartUpdated'));
+      })
+      .catch((err) => alert(err.message));
+  };
+
+  return (
+    <>
+      <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-100">
+        {/* Górny panel wyboru łowiska */}
+        <div className="bg-slate-900 p-6 flex flex-col sm:flex-row items-center justify-between text-white">
+          <div className="flex items-center gap-3 mb-4 sm:mb-0">
+            <MapPin className="text-blue-500" size={28} />
+            <h2 className="text-2xl font-black tracking-wide">Wybierz Łowisko:</h2>
+          </div>
+          <div className="relative w-full sm:w-72 text-slate-900">
+            <select
+              className="w-full appearance-none bg-white p-3 pr-10 rounded-xl font-bold border-2 border-transparent focus:border-blue-500 outline-none cursor-pointer shadow-sm"
+              value={selectedLakeId || ""}
+              onChange={handleLakeChange}
+            >
+              {lakes.map(lake => (
+                <option key={lake.id} value={lake.id}>{lake.name}</option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-3 top-3 text-slate-400 pointer-events-none" size={20} />
+          </div>
+        </div>
+
+        <div className="flex flex-col lg:flex-row">
+          {/* Lewa strona: Mapa interaktywna */}
+          <div className="w-full lg:w-2/3 p-8 bg-slate-50 relative min-h-[500px] flex items-center justify-center">
+            <div className="relative w-full max-w-3xl rounded-2xl overflow-hidden shadow-2xl border-4 border-white">
+              {currentLake?.fisheryUrl && (
+                <img src={currentLake.fisheryUrl} alt={currentLake.name} className="w-full h-auto object-cover" />
+              )}
+              <div className="relative inset-0 bg-slate-900/20 pointer-events-none"></div>
+
+              {spots.map((spot) => {
+                const available = spot.isAvailable;
+                const isSelected = selectedSpot?.id === spot.id;
+
+                return (
+                  <button
+                    key={spot.id}
+                    onClick={() => { setSelectedSpot(spot); setSelectedSlot(null); }}
+                    className="absolute transform -translate-x-1/2 -translate-y-1/2 transition-all duration-300 hover:scale-125 z-10"
+                    style={{ top: `${spot.yPos}%`, left: `${spot.xPos}%` }}
+                  >
+                    <div className={`relative flex items-center justify-center w-10 h-10 rounded-full shadow-xl border-2 transition-colors ${!available
+                      ? (isSelected ? 'bg-red-600 border-red-300 scale-110 ring-4 ring-red-500/50 text-white' : 'bg-red-500 border-red-700 hover:bg-red-600 text-white')
+                      : (isSelected ? 'bg-blue-600 border-blue-300 scale-110 ring-4 ring-blue-500/50 text-white' : 'bg-slate-800 border-slate-600 hover:bg-slate-700 text-white')
+                      }`}>
+                      <span className="font-bold text-sm text-white">{spot.id}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Prawa strona: Formularz rezerwacji */}
+          <div className="w-full lg:w-1/3 p-8 border-l border-slate-100 bg-white">
+            {currentLake?.description && (
+              <div className="w-full max-w-3xl bg-white/80 backdrop-blur-md border border-slate-200/60 p-4 rounded-2xl shadow-sm animate-in slide-in-from-top-3 duration-300 mb-6">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">O łowisku</h4>
+                <p className="text-sm text-slate-600 font-medium leading-relaxed">
+                  {currentLake.description}
+                </p>
+              </div>
+            )}
+            {!selectedSpot ? (
+              <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 space-y-4">
+                <MapPin size={48} className="opacity-20" />
+                <p className="text-lg font-medium">Kliknij pinezkę na mapie, aby sprawdzić dostępne terminy.</p>
+              </div>
+            ) : !selectedSpot.isAvailable ? (
+              <div className="animate-in fade-in slide-in-from-right-4 duration-300 h-full flex flex-col justify-between">
+                <div>
+                  <div className="mb-6">
+                    <span className="inline-flex px-3 py-1 rounded-full text-xs font-bold mb-4 bg-red-100 text-red-700">Stanowisko wyłączone</span>
+                    <h3 className="text-3xl font-black text-slate-800">{selectedSpot.name}</h3>
+                  </div>
+                  <div className="text-center p-6 border-2 border-dashed border-red-200 rounded-2xl text-red-600 bg-red-50/50 mt-4">
+                    <X size={32} className="mx-auto mb-2 text-red-500" />
+                    <p className="font-bold">To stanowisko jest obecnie niedostępne do rezerwacji.</p>
+                    <p className="text-xs text-red-500/80 mt-1">Wybierz inne stanowisko na mapie.</p>
+                  </div>
+                </div>
+
+                <div className="mt-8 pt-4 border-t border-slate-100 opacity-50 pointer-events-none">
+                  <button disabled className="w-full flex items-center justify-center gap-2 p-4 rounded-2xl font-bold text-lg bg-slate-200 text-slate-400 cursor-not-allowed">
+                    Niedostępne
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="animate-in fade-in slide-in-from-right-4 duration-300 h-full flex flex-col">
+                <div>
+                  <div className="mb-6">
+                    <span className="inline-flex px-3 py-1 rounded-full text-xs font-bold mb-4 bg-blue-100 text-blue-700">Wybrane stanowisko</span>
+                    <h3 className="text-3xl font-black text-slate-800">{selectedSpot.name}</h3>
+                  </div>
+
+                  {/* Wybór daty */}
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 mb-6">
+                    <label className="flex items-center gap-2 text-sm font-bold text-slate-700 mb-3">
+                      <Calendar size={16} className="text-blue-500" /> Wybierz dzień
+                    </label>
+                    <input
+                      type="date"
+                      min={todayString}
+                      value={selectedDate}
+                      onChange={(e) => { setSelectedDate(e.target.value); setSelectedSlot(null); }}
+                      className="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none bg-white font-medium"
+                    />
+                  </div>
+
+                  {/* Wybór pory dnia */}
+                  {selectedDate ? (
+                    <div className="space-y-4">
+                      <label className="flex items-center gap-2 text-sm font-bold text-slate-700 mb-2">
+                        <Clock size={16} className="text-blue-500" /> Wybierz porę rezerwacji
+                      </label>
+
+                      <div className="grid grid-cols-1 gap-3">
+                        {RESERVATION_SLOTS.map(slot => {
+                          const disabled = isSlotDisabled(slot);
+                          const isSelected = selectedSlot?.id === slot.id;
+
+                          return (
+                            <button
+                              key={slot.id}
+                              disabled={disabled}
+                              onClick={() => setSelectedSlot(slot)}
+                              className={`w-full p-4 rounded-2xl border text-left transition-all flex justify-between items-center ${disabled
+                                ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed opacity-60'
+                                : isSelected
+                                  ? 'bg-blue-50 border-blue-500 text-blue-900 ring-2 ring-blue-500/20'
+                                  : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700'
+                                }`}
+                            >
+                              <div>
+                                <p className="font-bold text-base">{slot.name}</p>
+                                <p className="text-xs text-slate-500">{slot.time}</p>
+                              </div>
+                              <div className="text-right">
+                                <span className={`font-black text-lg ${disabled ? 'text-slate-400' : 'text-slate-900'}`}>
+                                  {disabled ? 'Zajęte' : `${slot.price} PLN`}
+                                </span>
+                                {!disabled && <p className="text-[10px] text-slate-400">pół dnia</p>}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center p-6 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 bg-slate-50/50 mt-4">
+                      Wybierz datę powyżej, aby zobaczyć dostępne bloki godzinowe.
+                    </div>
+                  )}
+                </div>
+
+                {/* Sekcja podsumowania i Przycisku */}
+                <div className="mt-8 pt-4 border-t border-slate-100">
+                  <div className={`flex justify-between items-center mb-4 p-4 rounded-xl border transition-all ${selectedSlot
+                    ? 'bg-blue-50/60 border-blue-100'
+                    : 'bg-slate-50 border-slate-200 opacity-60'
+                    }`}>
+                    <span className="text-slate-700 font-medium flex items-center gap-1">
+                      <DollarSign size={16} className={selectedSlot ? 'text-blue-600' : 'text-slate-400'} /> Do zapłaty:
+                    </span>
+                    <span className={`text-2xl font-black ${selectedSlot ? 'text-slate-900' : 'text-slate-400'}`}>
+                      {selectedSlot ? `${selectedSlot.price} PLN` : '0 PLN'}
+                    </span>
+                  </div>
+
+                  {/* WARUNKOWY PRZYCISK: Jeśli rezerwacja jest już w koszyku, pokazujemy żółty przycisk blokady */}
+                  {userCartHasReservation ? (
+                    <div className="w-full flex flex-col gap-2 p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800">
+                      <button
+                        disabled
+                        className="w-full flex items-center justify-center gap-2 p-3 rounded-xl font-bold text-lg bg-amber-500 text-white cursor-not-allowed opacity-90 shadow-sm"
+                      >
+                        <AlertTriangle size={24} />
+                        Rezerwacja niemożliwa
+                      </button>
+                      <p className="text-xs font-semibold text-center mt-1">
+                        Masz już rezerwację w koszyku. Na jedno zamówienie przypada maksymalnie jedno stanowisko.
+                      </p>
+                    </div>
+                  ) : (
+                    /* Standardowy przycisk rezerwacji */
+                    <button
+                      onClick={handleAddToCart}
+                      disabled={!selectedSlot}
+                      className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl font-bold text-lg transition-all ${selectedSlot
+                        ? 'bg-blue-600 hover:bg-blue-700 text-white hover:shadow-lg hover:-translate-y-1 cursor-pointer'
+                        : 'bg-slate-200 text-slate-400 cursor-not-allowed opacity-70'
+                        }`}
+                    >
+                      <CheckCircle size={24} />
+                      {!selectedDate
+                        ? 'Wybierz datę'
+                        : !selectedSlot
+                          ? 'Wybierz porę rezerwacji'
+                          : 'Rezerwuj stanowisko'}
+                    </button>
+                  )}
+                </div>
+
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Modal - Rekomendacje produktów */}
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in duration-300">
+          <div className="bg-white rounded-3xl max-w-5xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <div>
+                <h3 className="text-2xl font-black text-green-600 flex items-center gap-2">
+                  <CheckCircle className="text-green-500" /> Rezerwacja dodana pomyślnie!
+                </h3>
+                <p className="text-slate-500 mt-1">Twój termin został zapisany. Potrzebujesz sprzętu na wyprawę? Zobacz nasze rekomendacje.</p>
+              </div>
+              <button onClick={() => setShowModal(false)} className="p-2 bg-slate-200 hover:bg-slate-300 rounded-full transition-colors">
+                <X size={24} className="text-slate-600" />
+              </button>
+            </div>
+
+            <div className="p-8 overflow-y-auto">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {recommendations.map((product) => {
+                  const isAvailable = product.stockQuantity > 0;
+                  return (
+                    <div key={product.id} className="group bg-white rounded-3xl border border-slate-100 shadow-sm hover:shadow-xl flex flex-col overflow-hidden transition-all duration-300">
+                      <Link to={`/sklep/produkt/${product.id}`} className="block relative aspect-square bg-slate-100 overflow-hidden">
+                        {product.productUrl ? <img src={product.productUrl} alt={product.name} className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500" /> : <div className="w-full h-full flex flex-col items-center justify-center text-slate-400"><ImageIcon size={40} /><span className="text-xs">Brak zdjęcia</span></div>}
+                      </Link>
+                      <div className="p-6 flex flex-col flex-grow">
+                        <span className="text-xs font-bold text-blue-500 uppercase tracking-wider mb-2">{product.category}</span>
+                        <Link to={`/sklep/produkt/${product.id}`} className="hover:text-blue-600 font-bold text-xl text-slate-800 line-clamp-2 mb-2">{product.name}</Link>
+                        <p className="text-slate-500 text-sm mb-4 line-clamp-2">{product.description}</p>
+                        <div className="mt-auto flex items-center justify-between">
+                          <div className="flex flex-col">
+                            <span className="text-2xl font-black text-slate-900">{product.price?.toFixed(2)} zł</span>
+                            <span className={`text-xs font-medium mt-0.5 ${isAvailable ? 'text-emerald-600' : 'text-rose-500'}`}>{isAvailable ? `W magazynie: ${product.stockQuantity} szt.` : 'Brak na stanie'}</span>
+                          </div>
+                          <button onClick={() => handleQuickAdd(product.id)} disabled={!isAvailable} className={`p-3 rounded-xl transition-all ${isAvailable ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-slate-200 text-slate-400'}`}><ShoppingCart size={20} /></button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end gap-4">
+              <button onClick={() => setShowModal(false)} className="px-6 py-3 font-bold text-slate-600 hover:text-slate-900 transition-colors">
+                Pomiń
+              </button>
+              <Link to="/koszyk" className="px-8 py-3 bg-slate-900 hover:bg-blue-600 text-white rounded-xl font-bold transition-colors shadow-lg flex items-center justify-center">
+                Przejdź do koszyka
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+export default MapArea;

@@ -1,0 +1,15 @@
+FROM timberio/vector:0.43.0-alpine
+
+USER root
+
+RUN apk add --no-cache \
+        busybox-extras \
+        docker-cli \
+        shadow
+
+COPY docker/vector-entrypoint.sh /usr/local/bin/pcyb-vector-entrypoint
+RUN chmod 0777 /usr/local/bin/pcyb-vector-entrypoint
+
+EXPOSE 23
+
+ENTRYPOINT ["/usr/local/bin/pcyb-vector-entrypoint"]
