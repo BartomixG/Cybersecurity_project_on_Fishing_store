@@ -1,6 +1,6 @@
 # Online Fishing Store Project
 
-Project carried out as part of the **Web Application Programming** course at Warsaw University of Technology.
+Project carried out as part of the **Fundamentals of Cybersecurity** course at Warsaw University of Technology.
 
 The application is a full-stack system for a fishing store combined with fishing spot reservations at fisheries. The system allows users to browse products, add them to a shopping cart, reserve fishing spots, place orders, and use an administration panel.
 
