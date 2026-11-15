@@ -1,10 +1,8 @@
 # Projekt internetowego sklepu wędkarskiego
 
-> Wariant przygotowany do izolowanego laboratorium PCYB (Vector, Telnet i
-> celowo podatny `docker.sock`) jest opisany w [PCYB_LAB_PL.md](PCYB_LAB_PL.md).
-> Nie należy uruchamiać tego wariantu w sieci produkcyjnej ani publicznej.
-
-Projekt realizowany w ramach przedmiotu **Programowanie Aplikacji Internetowych** na Politechnice Warszawskiej.
+> Wariant przygotowany w ramach projektu (Vector, Telnet i
+> celowo podatny `docker.sock`)
+Projekt zrealizowany w ramach przedmiotu **Programowanie Aplikacji Internetowych** oraz **Podstawy Cyberbezpieczeńśtwa** na Politechnice Warszawskiej.
 
 Aplikacja jest systemem full-stack dla sklepu wędkarskiego połączonego z rezerwacją stanowisk na łowiskach. System umożliwia przeglądanie produktów, dodawanie ich do koszyka, rezerwację stanowisk, składanie zamówień oraz korzystanie z panelu administratora.
 
